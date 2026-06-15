@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block sub %}<p class="sub">Establish the pixel→mm scale from the in-frame ruler, and set the coordinate origin (the resting bob position). The Y-axis is true vertical through the origin, positive upward.</p>{% endblock %}
+
+{% block body %}
+<div class="grid cols-2">
+  <div class="card">
+    <h3>Scale (px → mm)</h3>
+    <p class="hint">Click two points on the in-frame ruler, then type the real distance between them.</p>
+    <div class="canvas-wrap"><canvas id="scaleCanvas"></canvas></div>
+    <div class="row" style="margin-top:10px">
+      <div><label>Physical distance (mm)</label><input type="number" id="dist" step="0.1" value="10" /></div>
+      <div style="flex:0;align-self:flex-end"><button class="primary" onclick="saveScale()">Compute S</button></div>
+    </div>
+    <div id="scaleStat" class="status info" style="margin-top:10px">
+      {% if state.scale_S %}S = {{ "%.6f"|format(state.scale_S) }} mm/px{% else %}Click two points.{% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Origin (resting bob position)</h3>
+    <p class="hint">Click the single point where the bob sits when the pendulum is completely at rest.</p>
+    <div class="canvas-wrap"><canvas id="originCanvas"></canvas></div>
+    <div style="margin-top:10px"><button class="primary" onclick="saveOrigin()">Set origin</button></div>
+    <div id="originStat" class="status info" style="margin-top:10px">
+      {% if state.origin %}Origin = ({{ "%.1f"|format(state.origin[0]) }}, {{ "%.1f"|format(state.origin[1]) }}) px{% else %}Click the rest point.{% endif %}
+    </div>
+  </div>
+</div>
+<div class="card" style="margin-top:12px; padding:12px 16px">
+  <p class="hint" style="margin:0 0 6px">Play or scrub both windows to the resting frame, then click your points above.</p>
+  <div id="cal-scrub"></div>
+</div>
+{% endblock %}
+
+{% block nav_next %}
+<button class="primary" onclick="advance(5)">Continue → Diagnostics</button>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const FRAME = {{ info.frame_count // 2 }};
+const VIEW = {
+  sourceWidth: {{ view[2] }}, offsetX: {{ view[0] }}, offsetY: {{ view[1] }},
+  frameCount: {{ info.frame_count }}, fps: {{ info.fps }}, startFrame: FRAME,
+};
+
+// scaleC is the playback "master"; originC mirrors it to the same frame.
+const scaleC = new FrameCanvas("scaleCanvas", "points", {
+  ...VIEW, color: "#f1c40f", maxPoints: 2,
+  onFrame: (idx) => originC.goTo(idx),
+});
+const originC = new FrameCanvas("originCanvas", "point", { ...VIEW, color: "#ff5cf0", maxPoints: 1 });
+attachScrubber(scaleC, document.getElementById("cal-scrub"));
+scaleC.goTo(FRAME);
+
+async function saveScale() {
+  const pts = scaleC.fullPoints();
+  const s = document.getElementById("scaleStat");
+  if (pts.length < 2) { s.className = "status bad"; s.textContent = "Click two points first."; return; }
+  const body = { x1: pts[0].x, y1: pts[0].y, x2: pts[1].x, y2: pts[1].y, distance_mm: +document.getElementById("dist").value };
+  const { ok, data } = await postJSON("/api/scale", body);
+  if (ok && data.ok) { s.className = "status good"; s.textContent = `S = ${data.scale.toFixed(6)} mm/px`; }
+  else { s.className = "status bad"; s.textContent = data.error || "Failed."; }
+}
+
+async function saveOrigin() {
+  const pts = originC.fullPoints();
+  const s = document.getElementById("originStat");
+  if (!pts.length) { s.className = "status bad"; s.textContent = "Click the rest point first."; return; }
+  const { ok, data } = await postJSON("/api/origin", { x: pts[0].x, y: pts[0].y });
+  if (ok && data.ok) { s.className = "status good"; s.textContent = `Origin = (${data.origin[0].toFixed(1)}, ${data.origin[1].toFixed(1)}) px`; }
+  else { s.className = "status bad"; s.textContent = data.error || "Failed."; }
+}
+</script>
+{% endblock %}

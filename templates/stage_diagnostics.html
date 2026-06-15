@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block sub %}<p class="sub">Before processing the full video, sample exactly 100 evenly spaced frames and verify the bob is being detected reliably with the current calibration.</p>{% endblock %}
+
+{% block body %}
+<div class="card" style="max-width:640px">
+  <h3>Tracking health check</h3>
+  <label>Run to sample</label>
+  <select id="run">
+    <option value="__all__">Whole video</option>
+    {% for r in state.runs %}<option value="{{ r.name }}">{{ r.name }} ({{ r.start }}–{{ r.end }})</option>{% endfor %}
+  </select>
+  <div style="margin-top:16px"><button class="primary" id="run-btn" onclick="runDiag()">🩺 Run diagnostic (100 frames)</button></div>
+  <div id="result" class="status info" style="margin-top:16px">No diagnostic run yet.</div>
+  <p class="hint" style="margin-top:14px">≥95% is healthy. If lower, go back to the ROI / colour stage and widen the hue range, raise brightness/saturation minimums, or tighten the ROI.</p>
+</div>
+{% endblock %}
+
+{% block nav_next %}
+<button class="primary" onclick="advance(6)">Continue → Filter</button>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function runDiag() {
+  const btn = document.getElementById("run-btn");
+  const el = document.getElementById("result");
+  btn.disabled = true; el.className = "status info"; el.textContent = "Sampling 100 frames…";
+  const { ok, data } = await postJSON("/api/diagnostic", { run: document.getElementById("run").value });
+  btn.disabled = false;
+  if (!ok || !data.ok) { el.className = "status bad"; el.textContent = data.error || "Failed."; return; }
+  const cls = data.pct >= 95 ? "good" : data.pct >= 75 ? "warn" : "bad";
+  el.className = "status " + cls;
+  el.textContent = `Bob detected in ${data.hits}/${data.total} sampled frames (${data.pct.toFixed(0)}%).`;
+}
+</script>
+{% endblock %}

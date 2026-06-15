@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block sub %}<p class="sub">Review the runs, then accept the CSVs to also save each run's full-resolution cropped clip into its own folder.</p>{% endblock %}
+
+{% block body %}
+<div class="grid cols-2" style="margin-bottom:14px">
+  <div class="card" style="padding:12px 16px">
+    <label style="margin-top:0">Run to visualise</label>
+    <select id="run" onchange="draw()">
+      {% for name in state.results.keys() %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="card" style="padding:12px 16px">
+    <div class="kv" style="margin:0 0 4px">Full-res run videos (saved after the Runs stage)</div>
+    <div id="exp-barwrap" style="display:none; background:var(--panel2); border-radius:5px; height:8px; overflow:hidden; margin:4px 0"><div id="exp-bar" style="height:100%; width:0; background:var(--good)"></div></div>
+    <div id="exp-stat" class="hint" style="margin:4px 0 0">…</div>
+  </div>
+</div>
+
+<div class="grid cols-2" style="gap:14px">
+  <div class="card" style="padding:12px"><h3 style="margin:0 0 6px">X: raw vs filtered</h3><div id="gx" style="height:48vh"></div></div>
+  <div class="card" style="padding:12px"><h3 style="margin:0 0 6px">Y filtered</h3><div id="gy" style="height:48vh"></div></div>
+</div>
+{% endblock %}
+
+{% block nav_next %}<span class="kv">All done 🎉</span>{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<script>
+const LAYOUT = {
+  paper_bgcolor: "#1a1d27", plot_bgcolor: "#1a1d27",
+  font: { color: "#e6e8ee", size: 11 }, margin: { l: 48, r: 12, t: 6, b: 36 },
+  xaxis: { title: "Time (s)", gridcolor: "#2e3342" },
+  yaxis: { gridcolor: "#2e3342" }, legend: { orientation: "h", y: 1.1 },
+};
+async function draw() {
+  const run = document.getElementById("run").value;
+  if (!run) return;
+  const d = await getJSON(`/api/results/${encodeURIComponent(run)}`);
+  Plotly.newPlot("gx", [
+    { x: d.t, y: d.x_raw, name: "X_raw", line: { color: "#7a8294" } },
+    { x: d.t, y: d.x_filt, name: "X_filtered", line: { color: "#e74c3c" } },
+  ], { ...LAYOUT, yaxis: { ...LAYOUT.yaxis, title: "X (mm)" } }, { responsive: true, displayModeBar: false });
+  Plotly.newPlot("gy", [
+    { x: d.t, y: d.y_filt, name: "Y_filtered", line: { color: "#2ecc71" } },
+  ], { ...LAYOUT, yaxis: { ...LAYOUT.yaxis, title: "Y (mm)" } }, { responsive: true, displayModeBar: false });
+}
+
+let expPoll = null;
+async function pollExport() {
+  clearTimeout(expPoll);
+  const st = document.getElementById("exp-stat");
+  const bar = document.getElementById("exp-barwrap");
+  const s = await getJSON("/api/export_status");
+  if (s.state === "exporting") {
+    bar.style.display = "block";
+    st.className = "hint"; st.textContent = s.message || "Saving run videos…";
+    document.getElementById("exp-bar").style.width = (s.progress * 100).toFixed(1) + "%";
+    expPoll = setTimeout(pollExport, 800);
+  } else if (s.state === "ready") {
+    bar.style.display = "block";
+    document.getElementById("exp-bar").style.width = "100%";
+    st.className = "status good";
+    st.innerHTML = "Saved:<br>" + (s.done || []).map(p => `<span class='mono'>${p}</span>`).join("<br>");
+  } else if (s.state === "error") {
+    st.className = "status bad"; st.textContent = s.message || "Video export failed.";
+  } else {
+    st.className = "hint"; st.textContent = "No run videos saved yet (or ffmpeg unavailable for re-encoding).";
+  }
+}
+
+draw();
+pollExport();  // reflect the export kicked off after the Runs stage
+</script>
+{% endblock %}

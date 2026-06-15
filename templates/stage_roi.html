@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block sub %}<p class="sub">Tracking runs directly on the cropped video — no extra rectangle to draw. Tune the red hue until only the red bob shows in the mask.</p>{% endblock %}
+
+{% block body %}
+<div class="grid cols-2">
+  <div class="card">
+    <h3>Cropped video</h3>
+    <p class="hint">Play or scrub to a frame where the red bob is clear.</p>
+    <div class="canvas-wrap"><canvas id="roi"></canvas></div>
+    <div id="roi-scrub"></div>
+  </div>
+
+  <div class="card">
+    <h3>Red hue calibration (HSV)</h3>
+    <label>Hue center: <span id="hcv" class="mono"></span></label>
+    <input type="range" id="h_center" min="0" max="179" value="{{ state.hsv.h_center }}" />
+    <label>Hue tolerance ±: <span id="htv" class="mono"></span></label>
+    <input type="range" id="h_tol" min="1" max="40" value="{{ state.hsv.h_tol }}" />
+    <label>Saturation min: <span id="smv" class="mono"></span></label>
+    <input type="range" id="s_min" min="0" max="255" value="{{ state.hsv.s_min }}" />
+    <label>Value (brightness) min: <span id="vmv" class="mono"></span></label>
+    <input type="range" id="v_min" min="0" max="255" value="{{ state.hsv.v_min }}" />
+    <label>Min blob area (px²): <span id="mav" class="mono"></span></label>
+    <input type="range" id="min_area" min="1" max="2000" value="{{ state.min_area }}" />
+
+    <h3 style="margin-top:14px">Mask preview</h3>
+    <div class="canvas-wrap"><img id="mask" style="width:100%" /></div>
+    <div id="detect" class="status info" style="margin-top:10px">—</div>
+  </div>
+</div>
+{% endblock %}
+
+{% block nav_next %}
+<button class="primary" onclick="advance(4)">Continue → Calibration</button>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let curFrame = {{ info.frame_count // 2 }};
+const fc = new FrameCanvas("roi", "display", {
+  sourceWidth: {{ view[2] }}, offsetX: {{ view[0] }}, offsetY: {{ view[1] }},
+  frameCount: {{ info.frame_count }}, fps: {{ info.fps }}, startFrame: curFrame,
+  onFrame: (idx) => { curFrame = idx; if (!fc.playing) updateMask(); },
+  onPlayState: (p) => { if (!p) updateMask(); },  // refresh mask when playback stops
+});
+attachScrubber(fc, document.getElementById("roi-scrub"));
+
+let maskTimer = null;
+function updateMask() {
+  clearTimeout(maskTimer);
+  maskTimer = setTimeout(async () => {
+    await pushHSV();
+    document.getElementById("mask").src = `/api/mask?frame=${curFrame}&t=${Date.now()}`;
+    const d = await getJSON(`/api/detect?frame=${curFrame}`);
+    const el = document.getElementById("detect");
+    if (d.found) {
+      el.className = "status good";
+      el.textContent = `Bob found · center (${d.point[0].toFixed(0)}, ${d.point[1].toFixed(0)}) px`;
+    } else {
+      el.className = "status warn";
+      el.textContent = "Red bob not detected here — adjust HSV / min area.";
+    }
+  }, 180);
+}
+
+function hsvVals() {
+  return {
+    h_center: +h_center.value, h_tol: +h_tol.value,
+    s_min: +s_min.value, s_max: 255,
+    v_min: +v_min.value, v_max: 255,
+    min_area: +min_area.value,
+  };
+}
+async function pushHSV() {
+  const v = hsvVals();
+  document.getElementById("hcv").textContent = v.h_center;
+  document.getElementById("htv").textContent = v.h_tol;
+  document.getElementById("smv").textContent = v.s_min;
+  document.getElementById("vmv").textContent = v.v_min;
+  document.getElementById("mav").textContent = v.min_area;
+  await postJSON("/api/hsv", v);
+}
+["h_center","h_tol","s_min","v_min","min_area"].forEach((id) =>
+  document.getElementById(id).addEventListener("input", updateMask));
+
+fc.goTo(curFrame);
+</script>
+{% endblock %}

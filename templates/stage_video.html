@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block sub %}<p class="sub">Upload a long clip and (optionally) crop it to the region of interest, <em>or</em> load a folder of already-saved run videos to re-analyse directly. Set the per-file physical metadata either way.</p>{% endblock %}
+
+{% block body %}
+<div class="grid cols-2">
+  <div class="card">
+    <h3>Source</h3>
+    <label>Target Gap Height (mm)</label>
+    <input type="text" id="gap" placeholder="15" value="{{ state.gap_height }}" />
+    <label>Measured Pendulum Length L (mm)</label>
+    <input type="number" id="L" step="0.1" value="{{ state.pendulum_L }}" />
+
+    <hr style="border-color:var(--border); margin:14px 0" />
+    <label>Option A — a single video file</label>
+    <input type="file" id="file" accept="video/*" />
+    <div style="margin-top:10px"><button class="primary" onclick="loadVideo()">Upload &amp; load video</button></div>
+
+    <hr style="border-color:var(--border); margin:14px 0" />
+    <label>Option B — a folder of saved runs (e.g. a prior <span class="mono">height_…mm</span> export)</label>
+    <input type="file" id="folder" webkitdirectory directory multiple />
+    <div style="margin-top:10px"><button class="primary" onclick="loadFolder()">Load runs folder</button></div>
+
+    <div id="upwrap" style="display:none; margin-top:12px; background:var(--panel2); border-radius:6px; overflow:hidden; height:10px"><div id="upbar" style="height:100%; width:0; background:var(--accent)"></div></div>
+    <div id="status"></div>
+  </div>
+
+  <div class="card">
+    <h3>Details</h3>
+    <div id="details"><p class="hint">Load a video or runs folder to see its properties here.</p></div>
+  </div>
+</div>
+
+<div class="card" id="cropcard" style="margin-top:18px; {% if not info or state.mode == 'runs_folder' %}display:none{% endif %}">
+  <h3>Crop frame dimensions (optional)</h3>
+  <p class="hint">Drag a rectangle around the region containing the red bob (and the ruler, if you need it for scale calibration). Leave it as the full frame to skip.</p>
+  <div class="canvas-wrap" style="max-width:960px"><canvas id="crop"></canvas></div>
+
+  <label>Preview frame (to find one where the red bob is clear)</label>
+  <input type="range" id="scrub" min="0" max="{{ (info.frame_count - 1) if info else 1 }}" value="0" />
+  <span id="fnum" class="mono">0</span>
+
+  <div class="row" style="margin-top:14px">
+    <div style="flex:0"><button class="primary" onclick="saveCrop()">Save crop</button></div>
+    <div style="flex:0"><button onclick="resetCrop()">Use full frame</button></div>
+    <div id="cropstat" style="align-self:center"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block nav_next %}
+<button class="primary" id="next" onclick="advance(2)" {% if max_unlocked < 2 %}disabled{% endif %}>Continue → Runs</button>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let FULL_W = {{ info.width if info else 0 }};
+let fc = null;
+
+function buildCanvas() {
+  fc = new FrameCanvas("crop", "rect", {
+    sourceWidth: FULL_W, offsetX: 0, offsetY: 0, raw: true, color: "#4f8cff",
+    {% if state.view_crop %}initialRect: { x: {{ state.view_crop[0] }}, y: {{ state.view_crop[1] }}, w: {{ state.view_crop[2] }}, h: {{ state.view_crop[3] }} },{% endif %}
+  });
+  fc.loadFrame(0);
+}
+function setFrame(idx) { document.getElementById("fnum").textContent = idx; if (fc) fc.loadFrame(idx); }
+document.getElementById("scrub").addEventListener("input", (e) => setFrame(+e.target.value));
+
+async function saveCrop() {
+  const r = fc.fullRect();
+  const s = document.getElementById("cropstat");
+  if (!r) { s.className = "status warn"; s.textContent = "Draw a rectangle first (or use full frame)."; return; }
+  const { ok, data } = await postJSON("/api/viewcrop", r);
+  if (ok && data.ok) { s.className = "status good"; s.textContent = `Cropped to ${data.view.join(", ")} (x,y,w,h)`; }
+  else { s.className = "status bad"; s.textContent = data.error || "Failed."; }
+}
+async function resetCrop() {
+  await postJSON("/api/viewcrop", { reset: true });
+  document.getElementById("cropstat").className = "status info";
+  document.getElementById("cropstat").textContent = "Using the full frame.";
+}
+
+function onLoaded(data) {
+  document.getElementById("status").className = "status good";
+  document.getElementById("next").disabled = false;
+  if (data.mode === "runs_folder") {
+    document.getElementById("cropcard").style.display = "none";
+    const rows = (data.runs || []).map(r => `<div class="kv">${r.name}: <b>${r.end - r.start + 1}</b> frames</div>`).join("");
+    document.getElementById("details").innerHTML =
+      `<div class="kv">Loaded <b>${(data.runs || []).length}</b> run videos.</div>` + rows;
+    document.getElementById("status").textContent = "Runs folder loaded — continue.";
+    return;
+  }
+  const i = data.info;
+  FULL_W = i.width;
+  document.getElementById("details").innerHTML =
+    `<div class="kv">Resolution: <b>${i.width} × ${i.height}</b></div>` +
+    `<div class="kv">Frame rate: <b>${i.fps.toFixed(2)} fps</b></div>` +
+    `<div class="kv">Frames: <b>${i.frame_count}</b></div>` +
+    `<div class="kv">Duration: <b>${i.duration.toFixed(1)} s</b></div>`;
+  document.getElementById("scrub").max = i.frame_count - 1;
+  document.getElementById("cropcard").style.display = "block";
+  document.getElementById("status").textContent = "Loaded. Optionally crop the frame below, then continue.";
+  buildCanvas();
+}
+
+function _uploadXHR(url, fd, startMsg) {
+  const s = document.getElementById("status");
+  const wrap = document.getElementById("upwrap");
+  const bar = document.getElementById("upbar");
+  wrap.style.display = "block"; bar.style.width = "0";
+  s.className = "status info"; s.textContent = startMsg;
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", url);
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return;
+    const p = e.loaded / e.total * 100;
+    bar.style.width = p.toFixed(1) + "%";
+    s.textContent = p < 100 ? `Uploading… ${p.toFixed(0)}%` : "Processing on server…";
+  };
+  xhr.onload = () => {
+    let data = {};
+    try { data = JSON.parse(xhr.responseText); } catch (_) {}
+    if (xhr.status === 200 && data.ok) { onLoaded(data); }
+    else { s.className = "status bad"; s.textContent = data.error || `Failed (HTTP ${xhr.status}).`; }
+  };
+  xhr.onerror = () => { s.className = "status bad"; s.textContent = "Upload error — connection lost."; };
+  xhr.send(fd);
+}
+
+function loadVideo() {
+  const f = document.getElementById("file").files[0];
+  if (!f) { const s = document.getElementById("status"); s.className = "status bad"; s.textContent = "Choose a video file first."; return; }
+  const fd = new FormData();
+  fd.append("file", f);
+  fd.append("gap_height", document.getElementById("gap").value);
+  fd.append("pendulum_L", document.getElementById("L").value);
+  _uploadXHR("/api/upload_video", fd, "Uploading…");
+}
+
+function loadFolder() {
+  const files = document.getElementById("folder").files;
+  const s = document.getElementById("status");
+  if (!files || !files.length) { s.className = "status bad"; s.textContent = "Choose a folder first."; return; }
+  const fd = new FormData();
+  let n = 0;
+  for (const f of files) {
+    const ext = (f.name.split(".").pop() || "").toLowerCase();
+    if (["mp4", "mov", "avi", "mkv"].includes(ext)) { fd.append("files", f, f.webkitRelativePath || f.name); n++; }
+  }
+  if (!n) { s.className = "status bad"; s.textContent = "No video files in that folder."; return; }
+  fd.append("gap_height", document.getElementById("gap").value);
+  fd.append("pendulum_L", document.getElementById("L").value);
+  _uploadXHR("/api/upload_runs_folder", fd, `Uploading ${n} run videos…`);
+}
+
+{% if info and state.mode != 'runs_folder' %}buildCanvas();{% endif %}
+</script>
+{% endblock %}

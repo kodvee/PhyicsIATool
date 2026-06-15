@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block sub %}<p class="sub">Scrub the timeline and add each sequential decay run with its start/end frame. Tick exactly one Baseline run (filmed without the aluminium plate).</p>{% endblock %}
+
+{% block body %}
+<div class="grid cols-3-2">
+  <div class="card">
+    <h3>Timeline scrubber</h3>
+    <div class="canvas-wrap"><canvas id="view"></canvas></div>
+    <label>Frame: <span id="fnum" class="mono">0</span> &nbsp; (t = <span id="ftime" class="mono">0.000</span> s)</label>
+    <input type="range" id="scrub" min="0" max="{{ info.frame_count - 1 }}" value="0" />
+    <div class="row" style="margin-top:8px">
+      <div style="flex:0"><button class="primary" id="playbtn" onclick="togglePlay()">▶ Play</button></div>
+      <div style="flex:0"><button onclick="manualSet(curFrame - 1)">− frame</button></div>
+      <div style="flex:0"><button onclick="manualSet(curFrame + 1)">+ frame</button></div>
+      <div style="flex:0"><button onclick="manualSet(curFrame - 300)">−5s</button></div>
+      <div style="flex:0"><button onclick="manualSet(curFrame + 300)">+5s</button></div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <div><label>Jump to frame</label><input type="number" id="jump" min="0" max="{{ info.frame_count - 1 }}" value="0" /></div>
+      <div style="flex:0; align-self:flex-end"><button onclick="manualSet(+document.getElementById('jump').value)">Go</button></div>
+    </div>
+    <p class="hint" style="margin-top:6px">Play steps through the actual frames as fast as they decode; pause anywhere to set a start/end frame.</p>
+  </div>
+
+  <div class="card">
+    {% if state.mode == 'runs_folder' %}
+    <h3>Runs loaded from folder</h3>
+    <p class="hint">Each video in the folder is one run; numbered automatically. Continue to colour calibration.</p>
+    {% else %}
+    <h3>Add a run</h3>
+    <p class="hint">Runs are numbered automatically (run1, run2, …).</p>
+    <div class="row">
+      <div><label>Start frame</label><input type="number" id="rstart" min="0" max="{{ info.frame_count - 1 }}" value="0" /></div>
+      <div><label>End frame</label><input type="number" id="rend" min="0" max="{{ info.frame_count - 1 }}" value="0" /></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div style="flex:0"><button onclick="setStart()">Set start = current</button></div>
+      <div style="flex:0"><button onclick="setEnd()">Set end = current</button></div>
+    </div>
+    <label style="margin-top:14px"><input type="checkbox" id="rbase" /> &nbsp;Baseline run (no aluminium plate)</label>
+    <div style="margin-top:14px"><button class="primary" onclick="addRun()">➕ Add run</button></div>
+    <div id="rstatus"></div>
+    {% endif %}
+
+    <h3 style="margin-top:18px">Defined runs</h3>
+    <table id="runtable"><thead><tr><th>Name</th><th>Start</th><th>End</th><th>Dur</th><th></th><th></th></tr></thead><tbody></tbody></table>
+    <div id="savestat" class="hint" style="margin-top:8px"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block nav_next %}
+<button class="primary" onclick="finishRuns()">Continue → Colour</button>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const FPS = {{ info.fps }};
+const LAST = {{ info.frame_count - 1 }};
+let curFrame = 0;
+const view = document.getElementById("view");
+const ctx = view.getContext("2d");
+const bg = new Image();
+let playing = false, playTimer = null;
+// Drive playback off image-load so we never queue faster than frames decode.
+bg.onload = () => {
+  view.width = bg.width; view.height = bg.height; ctx.drawImage(bg, 0, 0);
+  if (playing) playTimer = setTimeout(advanceFrame, 1000 / FPS);
+};
+
+function setFrame(idx) {
+  idx = Math.max(0, Math.min(LAST, Math.round(idx)));
+  curFrame = idx;
+  document.getElementById("scrub").value = idx;
+  document.getElementById("fnum").textContent = idx;
+  document.getElementById("ftime").textContent = (idx / FPS).toFixed(3);
+  bg.src = `/api/frame/${idx}?t=${Date.now()}`;
+}
+// Manual navigation always stops playback first.
+function manualSet(idx) { stopPlay(); setFrame(idx); }
+
+function advanceFrame() {
+  if (!playing) return;
+  if (curFrame >= LAST) { stopPlay(); return; }
+  setFrame(curFrame + 1);
+}
+function startPlay() {
+  if (curFrame >= LAST) setFrame(0);
+  playing = true;
+  document.getElementById("playbtn").textContent = "⏸ Pause";
+  advanceFrame();
+}
+function stopPlay() {
+  playing = false; clearTimeout(playTimer);
+  document.getElementById("playbtn").textContent = "▶ Play";
+}
+function togglePlay() { playing ? stopPlay() : startPlay(); }
+
+document.getElementById("scrub").addEventListener("input", (e) => manualSet(+e.target.value));
+
+function setStart() { document.getElementById("rstart").value = curFrame; }
+function setEnd() { document.getElementById("rend").value = curFrame; }
+
+async function refreshRuns() {
+  const { runs } = await getJSON("/api/runs");
+  const tb = document.querySelector("#runtable tbody");
+  tb.innerHTML = "";
+  runs.forEach((r) => {
+    const dur = ((r.end - r.start) / FPS).toFixed(1) + "s";
+    const tag = r.baseline ? '<span class="badge base">baseline</span>' : "";
+    tb.innerHTML += `<tr><td>${r.name} ${tag}</td><td>${r.start}</td><td>${r.end}</td><td>${dur}</td>
+      <td><button onclick="jumpTo(${r.start})">view</button></td>
+      <td><button onclick="delRun('${r.name}')">✕</button></td></tr>`;
+  });
+}
+function jumpTo(f){ manualSet(f); }
+
+async function addRun() {
+  const body = {
+    start: +document.getElementById("rstart").value,
+    end: +document.getElementById("rend").value,
+    baseline: document.getElementById("rbase").checked,
+  };
+  const s = document.getElementById("rstatus");
+  const { ok, data } = await postJSON("/api/runs", body);
+  if (ok && data.ok) {
+    const added = data.runs[data.runs.length - 1];
+    s.className = "status good"; s.textContent = `Added ${added.name}.`;
+    document.getElementById("rbase").checked = false;
+    refreshRuns();
+  } else { s.className = "status bad"; s.textContent = data.error || "Failed."; }
+}
+async function delRun(name) {
+  await fetch("/api/runs", { method: "DELETE", headers: {"Content-Type":"application/json"}, body: JSON.stringify({name}) });
+  refreshRuns();
+}
+
+// Continue → kick off saving the full-res run clips (background), then advance.
+// In folder mode the server treats this as a no-op (clips already exist).
+async function finishRuns() {
+  await postJSON("/api/export_videos", {});
+  advance(3);
+}
+
+setFrame(0);
+refreshRuns();
+</script>
+{% endblock %}

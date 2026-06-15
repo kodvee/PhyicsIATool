@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block sub %}<p class="sub">Track every frame of each run, calibrate to mm, filter, and export one CSV per run into a folder named after the gap height.</p>{% endblock %}
+
+{% block body %}
+<div class="card" style="max-width:760px">
+  <h3>Process &amp; export</h3>
+  <div class="kv">Gap height: <b>{{ state.gap_height }} mm</b></div>
+  <div class="kv">Pendulum length L: <b>{{ state.pendulum_L }} mm</b></div>
+  <div class="kv">Scale: <b>{% if state.scale_S %}{{ "%.6f"|format(state.scale_S) }} mm/px{% else %}—{% endif %}</b></div>
+  <div class="kv">Runs: <b>{{ state.runs|length }}</b></div>
+
+  <label style="margin-top:14px">Export base directory</label>
+  <input type="text" id="dir" value="{{ state.export_dir }}" />
+  <p class="hint">CSVs are written to <span class="mono">&lt;dir&gt;/height_{{ state.gap_height }}mm/&lt;run&gt;/&lt;run&gt;.csv</span></p>
+
+  <div style="margin-top:16px"><button class="primary" id="go" onclick="run()">▶️ Process all runs</button></div>
+  <div id="pstat" class="status info" style="margin-top:14px">Ready.</div>
+  <table id="summary" style="margin-top:14px; display:none">
+    <thead><tr><th>Run</th><th>Frames</th><th>Detected</th><th>CSV</th></tr></thead><tbody></tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block nav_next %}
+<button class="primary" id="next" onclick="advance(8)" disabled>Continue → Results</button>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function run() {
+  const btn = document.getElementById("go");
+  const st = document.getElementById("pstat");
+  btn.disabled = true; st.className = "status info"; st.textContent = "Processing… this can take a while for long 4K runs.";
+  const { ok, data } = await postJSON("/api/process", { export_dir: document.getElementById("dir").value });
+  btn.disabled = false;
+  if (!ok || !data.ok) { st.className = "status bad"; st.textContent = data.error || "Failed."; return; }
+  st.className = "status good"; st.textContent = `Done. CSVs written to ${data.folder}`;
+  const tb = document.querySelector("#summary tbody"); tb.innerHTML = "";
+  data.summary.forEach((r) => {
+    tb.innerHTML += `<tr><td>${r.name}</td><td>${r.frames}</td><td>${r.detected}</td><td class="mono">${r.path}</td></tr>`;
+  });
+  document.getElementById("summary").style.display = "table";
+  document.getElementById("next").disabled = false;
+}
+</script>
+{% endblock %}

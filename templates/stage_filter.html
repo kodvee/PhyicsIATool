@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block sub %}<p class="sub">The bob can carry a high-frequency vibration on top of the slow swing. A low-pass filter strips that, leaving the clean exponential decay. Choose <b>None</b> to export the raw position unmodified (the <span class="mono">*_filtered</span> columns become an exact copy of <span class="mono">*_raw</span>).</p>{% endblock %}
+
+{% block body %}
+<div class="card" style="max-width:680px">
+  <h3>Noise filter settings</h3>
+  <label>Method</label>
+  <select id="method">
+    <option value="none" {% if state.filter_method == 'none' %}selected{% endif %}>None (raw, no filtering)</option>
+    <option value="butterworth" {% if state.filter_method == 'butterworth' %}selected{% endif %}>Butterworth low-pass (zero-phase)</option>
+    <option value="moving_average" {% if state.filter_method == 'moving_average' %}selected{% endif %}>Moving average</option>
+  </select>
+
+  <div id="butter">
+    <label>Low-pass cutoff frequency: <span id="cutv" class="mono"></span> Hz</label>
+    <input type="range" id="cutoff" min="1" max="5" step="0.1" value="{{ state.cutoff_hz }}" />
+    <p class="hint">Range 1–5 Hz. Lower = smoother (more aggressive vibration removal).</p>
+  </div>
+
+  <div id="ma" style="display:none">
+    <label>Moving-average window: <span id="winv" class="mono"></span> frames</label>
+    <input type="range" id="window" min="3" max="61" step="2" value="{{ state.ma_window }}" />
+  </div>
+
+  <div id="nonebox" style="display:none"><p class="hint">No filtering applied — raw position is exported as-is.</p></div>
+
+  <div id="fstat" class="status good" style="margin-top:14px">Settings saved automatically.</div>
+</div>
+{% endblock %}
+
+{% block nav_next %}
+<button class="primary" onclick="advance(7)">Continue → Process</button>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggle() {
+  const m = document.getElementById("method").value;
+  document.getElementById("butter").style.display = m === "butterworth" ? "block" : "none";
+  document.getElementById("ma").style.display = m === "moving_average" ? "block" : "none";
+  document.getElementById("nonebox").style.display = m === "none" ? "block" : "none";
+  save();
+}
+async function save() {
+  document.getElementById("cutv").textContent = (+document.getElementById("cutoff").value).toFixed(1);
+  document.getElementById("winv").textContent = document.getElementById("window").value;
+  await postJSON("/api/filter", {
+    method: document.getElementById("method").value,
+    cutoff_hz: +document.getElementById("cutoff").value,
+    ma_window: +document.getElementById("window").value,
+  });
+}
+document.getElementById("method").addEventListener("change", toggle);
+document.getElementById("cutoff").addEventListener("input", save);
+document.getElementById("window").addEventListener("input", save);
+toggle();
+</script>
+{% endblock %}

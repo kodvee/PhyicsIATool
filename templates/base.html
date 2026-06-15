@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ title }} · Pendulum Decay Analyzer</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+<div class="app">
+  <nav class="stepper">
+    {% for slug, t in stages %}
+      {% set num = loop.index %}
+      {% if num == n %}{% set cls = 'current' %}
+      {% elif num <= max_unlocked %}{% set cls = 'done' %}
+      {% else %}{% set cls = 'locked' %}{% endif %}
+      <a class="step {{ cls }}" href="{{ url_for('stage', n=num) if num <= max_unlocked else '#' }}">
+        <span class="num">{{ num }}</span><span>{{ t }}</span>
+      </a>
+    {% endfor %}
+  </nav>
+
+  <main class="stage">
+    <h1>{{ n }}. {{ title }}</h1>
+    {% block sub %}{% endblock %}
+    {% block body %}{% endblock %}
+  </main>
+
+  <div class="navbar">
+    <div>
+      {% if n > 1 %}<button onclick="goBack({{ n - 1 }})">← Back</button>{% endif %}
+    </div>
+    <div>{% block nav_next %}{% endblock %}</div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='common.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip3 --version)",
+      "Bash(python3 -c \"import streamlit; print\\(streamlit.__version__\\)\")",
+      "Bash(python3 -c \"import cv2; print\\(cv2.__version__\\)\")",
+      "Bash(python3 -c \"import plotly; print\\(plotly.__version__\\)\")",
+      "Bash(python3 -c \"import scipy; print\\(scipy.__version__\\)\")"
+    ]
+  }
+}
